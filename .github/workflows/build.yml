@@ -33,7 +33,7 @@ jobs:
       - name: 📦 Bundle Offline JavaScript Assets
         run: |
           mkdir -p android/app/src/main/assets
-          npx react-native bundle \
+          npx expo export:embed \
             --platform android \
             --dev false \
             --entry-file index.js \
