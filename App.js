@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -7,43 +7,20 @@ import {
   TextInput, 
   ScrollView, 
   SafeAreaView, 
-  Modal 
+  Modal,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
+import { supabase } from './supabaseClient';
 
 export default function App() {
   const [userRole, setUserRole] = useState(null); // 'tenant' or 'owner'
   const [searchCity, setSearchCity] = useState('');
   const [selectedProperty, setSelectedProperty] = useState(null);
+  const [properties, setProperties] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  // Sample Registered Properties
-  const [properties, setProperties] = useState([
-    {
-      id: 'PROP-10491',
-      ownerName: 'Rajesh Sharma',
-      city: 'Agartala',
-      locality: 'Banamalipur',
-      totalRooms: 4,
-      vacantRooms: 2,
-      rentPerRoom: '₹6,500/month',
-      waterSupply: '24/7 Submersible + Municipal',
-      electricity: 'Separate Sub-meter',
-      status: 'vacant' // Green pin
-    },
-    {
-      id: 'PROP-10492',
-      ownerName: 'Amit Saha',
-      city: 'Agartala',
-      locality: 'Ramnagar',
-      totalRooms: 3,
-      vacantRooms: 0,
-      rentPerRoom: '₹5,000/month',
-      waterSupply: '24/7 Deep Borewell',
-      electricity: 'Included in Rent',
-      status: 'occupied' // Red pin
-    }
-  ]);
-
-  // Owner Form States
+  // Form inputs for Rent Owners
   const [ownerName, setOwnerName] = useState('');
   const [locality, setLocality] = useState('');
   const [city, setCity] = useState('');
@@ -53,27 +30,71 @@ export default function App() {
   const [water, setWater] = useState('');
   const [electricity, setElectricity] = useState('');
 
-  const handleRegisterProperty = () => {
-    if (!ownerName || !city || !rent) return;
+  // Fetch all live properties from Supabase
+  const fetchProperties = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('properties')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching properties:', error.message);
+    } else {
+      setProperties(data || []);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchProperties();
+  }, []);
+
+  // Save new property directly to Supabase
+  const handleRegisterProperty = async () => {
+    if (!ownerName || !city || !rent) {
+      Alert.alert('Missing Info', 'Please enter your name, city, and rent amount.');
+      return;
+    }
+
     const newId = `PROP-${Math.floor(10000 + Math.random() * 90000)}`;
-    const isVacant = parseInt(vacantRooms || '0') > 0;
-    
+    const vacantCount = parseInt(vacantRooms || '0', 10);
+    const isVacant = vacantCount > 0;
+
     const newProperty = {
       id: newId,
-      ownerName,
-      city,
-      locality,
-      totalRooms: parseInt(totalRooms || '1'),
-      vacantRooms: parseInt(vacantRooms || '0'),
-      rentPerRoom: `₹${rent}/month`,
-      waterSupply: water || 'Standard Supply',
+      owner_name: ownerName,
+      city: city.trim(),
+      locality: locality.trim(),
+      total_rooms: parseInt(totalRooms || '1', 10),
+      vacant_rooms: vacantCount,
+      rent_per_room: `₹${rent}/month`,
+      water_supply: water || 'Standard Supply',
       electricity: electricity || 'Sub-meter',
       status: isVacant ? 'vacant' : 'occupied'
     };
 
-    setProperties([newProperty, ...properties]);
-    alert(`Success! Property registered with ID: ${newId}`);
-    setUserRole('tenant'); // Switch to view on map
+    setLoading(true);
+    const { error } = await supabase.from('properties').insert([newProperty]);
+    setLoading(false);
+
+    if (error) {
+      Alert.alert('Error', error.message);
+    } else {
+      Alert.alert('Success!', `Property registered with ID: ${newId}`);
+      // Clear form
+      setOwnerName('');
+      setLocality('');
+      setCity('');
+      setTotalRooms('');
+      setVacantRooms('');
+      setRent('');
+      setWater('');
+      setElectricity('');
+      // Refresh list & switch to tenant view
+      await fetchProperties();
+      setUserRole('tenant');
+    }
   };
 
   // 1. Role Selection Screen
@@ -115,7 +136,7 @@ export default function App() {
             <Text style={styles.backLink}>← Back to Role Selection</Text>
           </TouchableOpacity>
           <Text style={styles.screenHeading}>Register Your Property</Text>
-          <Text style={styles.screenSub}>Fill in details to place your pin on GreenDoor</Text>
+          <Text style={styles.screenSub}>Save details to Supabase Cloud & generate map pin</Text>
 
           <Text style={styles.label}>Owner Full Name</Text>
           <TextInput style={styles.input} placeholder="e.g. Rajesh Sharma" value={ownerName} onChangeText={setOwnerName} />
@@ -146,8 +167,12 @@ export default function App() {
           <Text style={styles.label}>Electricity Meter Details</Text>
           <TextInput style={styles.input} placeholder="e.g. Separate Sub-meter" value={electricity} onChangeText={setElectricity} />
 
-          <TouchableOpacity style={styles.submitButton} onPress={handleRegisterProperty}>
-            <Text style={styles.submitButtonText}>Generate Pin & Register Property</Text>
+          <TouchableOpacity style={styles.submitButton} onPress={handleRegisterProperty} disabled={loading}>
+            {loading ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={styles.submitButtonText}>Generate Pin & Save to Cloud</Text>
+            )}
           </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
@@ -156,8 +181,8 @@ export default function App() {
 
   // 3. Tenant Map & Discovery Screen
   const filteredProperties = properties.filter(p => 
-    p.city.toLowerCase().includes(searchCity.toLowerCase()) || 
-    p.locality.toLowerCase().includes(searchCity.toLowerCase())
+    (p.city && p.city.toLowerCase().includes(searchCity.toLowerCase())) || 
+    (p.locality && p.locality.toLowerCase().includes(searchCity.toLowerCase()))
   );
 
   return (
@@ -169,44 +194,50 @@ export default function App() {
         <Text style={styles.mapTitle}>GreenDoor Map</Text>
       </View>
 
-      {/* Search Bar */}
       <View style={styles.searchBox}>
         <TextInput 
           style={styles.searchInput} 
-          placeholder="Search by city or locality (e.g. Agartala)..." 
+          placeholder="Search by city or locality..." 
           value={searchCity} 
           onChangeText={setSearchCity} 
         />
       </View>
 
-      {/* Map Simulation Container */}
       <View style={styles.mapContainer}>
-        <Text style={styles.mapNotice}>📍 Interactive Map View</Text>
+        <Text style={styles.mapNotice}>📍 Live Real-Time Property Feed</Text>
         <View style={styles.legendRow}>
-          <Text style={styles.legendItem}>🟢 Green Pin = Vacant Rooms</Text>
-          <Text style={styles.legendItem}>🔴 Red Pin = Fully Occupied</Text>
+          <Text style={styles.legendItem}>🟢 Green Pin = Vacant</Text>
+          <Text style={styles.legendItem}>🔴 Red Pin = Occupied</Text>
         </View>
 
-        <ScrollView style={styles.pinsList}>
-          {filteredProperties.map((prop) => (
-            <TouchableOpacity 
-              key={prop.id} 
-              style={[styles.pinCard, prop.status === 'vacant' ? styles.pinCardGreen : styles.pinCardRed]}
-              onPress={() => setSelectedProperty(prop)}
-            >
-              <View style={styles.pinHeader}>
-                <Text style={styles.pinIcon}>{prop.status === 'vacant' ? '🟢 🏠' : '🔴 🏠'}</Text>
-                <View>
-                  <Text style={styles.pinOwner}>{prop.ownerName}'s Property</Text>
-                  <Text style={styles.pinLoc}>{prop.locality}, {prop.city} • ID: {prop.id}</Text>
-                </View>
-              </View>
-              <Text style={styles.pinStatusText}>
-                {prop.status === 'vacant' ? `Available: ${prop.vacantRooms} Room(s)` : 'Currently Full'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {loading ? (
+          <ActivityIndicator size="large" color="#2D6A4F" style={{ marginTop: 20 }} />
+        ) : (
+          <ScrollView style={styles.pinsList}>
+            {filteredProperties.length === 0 ? (
+              <Text style={styles.emptyText}>No properties found. Switch to Owner role to register one!</Text>
+            ) : (
+              filteredProperties.map((prop) => (
+                <TouchableOpacity 
+                  key={prop.id} 
+                  style={[styles.pinCard, prop.status === 'vacant' ? styles.pinCardGreen : styles.pinCardRed]}
+                  onPress={() => setSelectedProperty(prop)}
+                >
+                  <View style={styles.pinHeader}>
+                    <Text style={styles.pinIcon}>{prop.status === 'vacant' ? '🟢 🏠' : '🔴 🏠'}</Text>
+                    <View>
+                      <Text style={styles.pinOwner}>{prop.owner_name}'s Property</Text>
+                      <Text style={styles.pinLoc}>{prop.locality}, {prop.city} • ID: {prop.id}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.pinStatusText}>
+                    {prop.status === 'vacant' ? `Available: ${prop.vacant_rooms} Room(s)` : 'Currently Full'}
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+        )}
       </View>
 
       {/* Property Details Modal */}
@@ -214,18 +245,21 @@ export default function App() {
         <Modal animationType="slide" transparent={true} visible={!!selectedProperty}>
           <View style={styles.modalBackdrop}>
             <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>{selectedProperty.ownerName}'s Property</Text>
+              <Text style={styles.modalTitle}>{selectedProperty.owner_name}'s Property</Text>
               <Text style={styles.modalId}>UID: {selectedProperty.id}</Text>
 
               <View style={styles.modalDetails}>
                 <Text style={styles.detailItem}>📍 Location: {selectedProperty.locality}, {selectedProperty.city}</Text>
-                <Text style={styles.detailItem}>💰 Rent: {selectedProperty.rentPerRoom}</Text>
-                <Text style={styles.detailItem}>🚪 Available: {selectedProperty.vacantRooms} of {selectedProperty.totalRooms} rooms</Text>
-                <Text style={styles.detailItem}>💧 Water: {selectedProperty.waterSupply}</Text>
+                <Text style={styles.detailItem}>💰 Rent: {selectedProperty.rent_per_room}</Text>
+                <Text style={styles.detailItem}>🚪 Available: {selectedProperty.vacant_rooms} of {selectedProperty.total_rooms} rooms</Text>
+                <Text style={styles.detailItem}>💧 Water: {selectedProperty.water_supply}</Text>
                 <Text style={styles.detailItem}>⚡ Electricity: {selectedProperty.electricity}</Text>
               </View>
 
-              <TouchableOpacity style={styles.contactButton} onPress={() => alert(`Contacting ${selectedProperty.ownerName} to schedule a visit!`)}>
+              <TouchableOpacity 
+                style={styles.contactButton} 
+                onPress={() => Alert.alert('Contacting Owner', `Connecting you to ${selectedProperty.owner_name} to schedule a visit!`)}
+              >
                 <Text style={styles.contactButtonText}>📞 Contact Owner & Schedule Visit</Text>
               </TouchableOpacity>
 
@@ -267,6 +301,7 @@ const styles = StyleSheet.create({
   legendRow: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 8 },
   legendItem: { fontSize: 12, fontWeight: '600', color: '#555' },
   pinsList: { marginTop: 10 },
+  emptyText: { textAlign: 'center', color: '#888', marginTop: 20, fontSize: 14 },
   pinCard: { backgroundColor: '#FFF', padding: 14, borderRadius: 12, marginBottom: 10, borderWidth: 2 },
   pinCardGreen: { borderColor: '#52B788' },
   pinCardRed: { borderColor: '#E63946' },
