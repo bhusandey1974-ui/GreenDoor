@@ -30,7 +30,17 @@ jobs:
       - name: 📱 Generate Native Android Project
         run: npx expo prebuild --platform android --no-install
 
-      - name: 🔨 Build Debug APK
+      - name: 📦 Bundle Offline JavaScript Assets
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file index.js \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+
+      - name: 🔨 Build Standalone Offline APK
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError"
         run: |
